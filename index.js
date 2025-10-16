@@ -4,46 +4,49 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-// ===================
-// CLASES
-// ===================
-class Tarea {
-  constructor(titulo, descripcion = "", vencimiento = null, dificultad = 1) {
-    if (!titulo || titulo.length > 100) {
-      throw new Error("Título obligatorio y debe tener menos de 100 caracteres");
-    }
-    this.titulo = titulo;
-    this.descripcion = descripcion.slice(0, 500);
-    this.estado = "pendiente";
-    this.fechaCreacion = new Date();
-    this.ultimaEdicion = new Date();
-    this.vencimiento = vencimiento ? new Date(vencimiento) : null;
-    this.dificultad = dificultad;
+// ===============================
+// CONSTRUCTORES Y PROTOTIPOS
+// ===============================
+
+// Constructor de Tarea
+function Tarea(titulo, descripcion = "", vencimiento = null, dificultad = 1) {
+  if (!titulo || titulo.length > 100) {
+    throw new Error("Título obligatorio y debe tener menos de 100 caracteres");
   }
 
-  setEstado(nuevoEstado) {
-    const estadosValidos = ["pendiente", "en curso", "terminada", "cancelada"];
-    if (!estadosValidos.includes(nuevoEstado)) {
-      throw new Error("Estado inválido");
-    }
-    this.estado = nuevoEstado;
-    this.ultimaEdicion = new Date();
-  }
+  this.titulo = titulo;
+  this.descripcion = descripcion.slice(0, 500);
+  this.estado = "pendiente";
+  this.fechaCreacion = new Date();
+  this.ultimaEdicion = new Date();
+  this.vencimiento = vencimiento ? new Date(vencimiento) : null;
+  this.dificultad = dificultad;
+}
 
-  setDificultad(nuevaDificultad) {
-    if (![1, 2, 3].includes(nuevaDificultad)) {
-      throw new Error("Dificultad inválida (1=fácil, 2=medio, 3=difícil)");
-    }
-    this.dificultad = nuevaDificultad;
-    this.ultimaEdicion = new Date();
+// Métodos del prototipo Tarea
+Tarea.prototype.setEstado = function (nuevoEstado) {
+  const estadosValidos = ["pendiente", "en curso", "terminada", "cancelada"];
+  if (!estadosValidos.includes(nuevoEstado)) {
+    throw new Error("Estado inválido");
   }
+  this.estado = nuevoEstado;
+  this.ultimaEdicion = new Date();
+};
 
-  getDificultadVisual() {
-    return "⭐".repeat(this.dificultad);
+Tarea.prototype.setDificultad = function (nuevaDificultad) {
+  if (![1, 2, 3].includes(nuevaDificultad)) {
+    throw new Error("Dificultad inválida (1=fácil, 2=medio, 3=difícil)");
   }
+  this.dificultad = nuevaDificultad;
+  this.ultimaEdicion = new Date();
+};
 
-  detalle() {
-    return `
+Tarea.prototype.getDificultadVisual = function () {
+  return "⭐".repeat(this.dificultad);
+};
+
+Tarea.prototype.detalle = function () {
+  return `
 📌 ${this.titulo}
 📝 Descripción: ${this.descripcion || "Sin descripción"}
 📊 Estado: ${this.estado}
@@ -51,35 +54,39 @@ class Tarea {
 📅 Creación: ${this.fechaCreacion.toLocaleString()}
 🛠 Última edición: ${this.ultimaEdicion.toLocaleString()}
 ⏳ Vencimiento: ${this.vencimiento ? this.vencimiento.toLocaleDateString() : "Sin datos"}
-    `.trim();
-  }
+  `.trim();
+};
+
+// Constructor de GestorTareas
+function GestorTareas() {
+  this.tareas = [];
 }
 
-class GestorTareas {
-  constructor() {
-    this.tareas = [];
-  }
-  agregarTarea(tarea) {
-    this.tareas.push(tarea);
-  }
-  listarTareas(filtro = null) {
-    return this.tareas.filter((t) => !filtro || t.estado === filtro);
-  }
-  buscarTareas(palabra) {
-    return this.tareas.filter((t) =>
-      t.titulo.toLowerCase().includes(palabra.toLowerCase())
-    );
-  }
-  getTarea(index) {
-    return this.tareas[index];
-  }
-}
+// Métodos del prototipo GestorTareas
+GestorTareas.prototype.agregarTarea = function (tarea) {
+  this.tareas.push(tarea);
+};
 
+GestorTareas.prototype.listarTareas = function (filtro = null) {
+  return this.tareas.filter((t) => !filtro || t.estado === filtro);
+};
+
+GestorTareas.prototype.buscarTareas = function (palabra) {
+  return this.tareas.filter((t) =>
+    t.titulo.toLowerCase().includes(palabra.toLowerCase())
+  );
+};
+
+GestorTareas.prototype.getTarea = function (index) {
+  return this.tareas[index];
+};
+
+// Instancia del gestor
 const gestor = new GestorTareas();
 
-// ===================
+// ===============================
 // ORDENAMIENTO BONUS
-// ===================
+// ===============================
 function ordenarTareas(lista, callbackVolver) {
   if (lista.length === 0) {
     console.log("\n⚠️ No hay tareas para mostrar");
@@ -111,9 +118,9 @@ function ordenarTareas(lista, callbackVolver) {
   });
 }
 
-// ===================
+// ===============================
 // MENÚ PRINCIPAL
-// ===================
+// ===============================
 function menuPrincipal() {
   console.log("\n📋 MENÚ PRINCIPAL");
   console.log("1. Ver mis tareas");
@@ -143,9 +150,9 @@ function menuPrincipal() {
   });
 }
 
-// ===================
+// ===============================
 // MENÚ VER TAREAS
-// ===================
+// ===============================
 function menuVerTareas() {
   console.log("\n📋 VER TAREAS");
   console.log("1. Todas");
@@ -172,9 +179,9 @@ function menuVerTareas() {
   });
 }
 
-// ===================
+// ===============================
 // LISTADO DE TAREAS
-// ===================
+// ===============================
 function mostrarListadoTareas(lista, callbackVolver) {
   console.log("\n📋 LISTADO DE TAREAS:");
   lista.forEach((t, i) =>
@@ -195,9 +202,9 @@ function mostrarListadoTareas(lista, callbackVolver) {
   });
 }
 
-// ===================
+// ===============================
 // DETALLE DE TAREA
-// ===================
+// ===============================
 function menuDetalleTarea(tarea, callbackVolver) {
   console.log("\n📋 DETALLE DE TAREA");
   console.log(tarea.detalle());
@@ -214,9 +221,9 @@ function menuDetalleTarea(tarea, callbackVolver) {
   });
 }
 
-// ===================
+// ===============================
 // EDITAR TAREA
-// ===================
+// ===============================
 function menuEditarTarea(tarea, callbackVolver) {
   console.log("\n✏️ EDITAR TAREA");
   rl.question(`Título (${tarea.titulo}): `, (titulo) => {
@@ -244,9 +251,9 @@ function menuEditarTarea(tarea, callbackVolver) {
   });
 }
 
-// ===================
+// ===============================
 // BUSCAR TAREA
-// ===================
+// ===============================
 function menuBuscarTarea() {
   rl.question("\n🔍 Ingresa palabra clave para buscar: ", (palabra) => {
     const resultados = gestor.buscarTareas(palabra);
@@ -258,9 +265,9 @@ function menuBuscarTarea() {
   });
 }
 
-// ===================
+// ===============================
 // AGREGAR TAREA
-// ===================
+// ===============================
 function menuAgregarTarea() {
   console.log("\n➕ AGREGAR NUEVA TAREA");
 
@@ -287,7 +294,7 @@ function menuAgregarTarea() {
   });
 }
 
-// ===================
-// INICIO
-// ===================
+// ===============================
+// INICIO DEL PROGRAMA
+// ===============================
 menuPrincipal();
