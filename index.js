@@ -1,300 +1,455 @@
-const readline = require("readline");
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
+// =======================================================
+// ToDo List - Implementación FUNCIONAL (Node.js)
+// Núcleo puro + capa de I/O mínima (impura)
+// Requisitos: prompt-sync (ya en tu proyecto)
+// =======================================================
+
+// ------------------------------
+// 🧱 Utilidades funcionales (puras)
+// ------------------------------
+const identity = x => x;
+
+const compose = (...fns) => input =>
+  fns.reduceRight((acc, fn) => fn(acc), input);
+
+const pipe = (...fns) => input =>
+  fns.reduce((acc, fn) => fn(acc), input);
+
+// deepFreeze: inmutabilidad (shallow + anidado)
+const deepFreeze = (obj) => {
+  if (obj && typeof obj === "object" && !Object.isFrozen(obj)) {
+    Object.freeze(obj);
+    Object.getOwnPropertyNames(obj).forEach((prop) => {
+      deepFreeze(obj[prop]);
+    });
+  }
+  return obj;
+};
+
+// Helpers inmutables
+const freezeCopy = (o) => deepFreeze({ ...o });
+const freezeArrayCopy = (arr) => deepFreeze([...arr]);
+
+// ------------------------------
+// 📚 Modelo y validaciones (puro)
+// ------------------------------
+const ESTADOS = deepFreeze({
+  PENDIENTE: "Pendiente",
+  EN_CURSO: "En Curso",
+  TERMINADA: "Terminada",
+  CANCELADA: "Cancelada",
 });
 
-// ===============================
-// CONSTRUCTORES Y PROTOTIPOS
-// ===============================
+const DIFICULTAD = deepFreeze({
+  FACIL: "Fácil",
+  MEDIO: "Medio",
+  DIFICIL: "Difícil",
+});
 
-// Constructor de Tarea
-function Tarea(titulo, descripcion = "", vencimiento = null, dificultad = 1) {
-  if (!titulo || titulo.length > 100) {
-    throw new Error("Título obligatorio y debe tener menos de 100 caracteres");
-  }
+const isNonEmptyString = (s) => typeof s === "string" && s.trim().length > 0;
 
-  this.titulo = titulo;
-  this.descripcion = descripcion.slice(0, 500);
-  this.estado = "pendiente";
-  this.fechaCreacion = new Date();
-  this.ultimaEdicion = new Date();
-  this.vencimiento = vencimiento ? new Date(vencimiento) : null;
-  this.dificultad = dificultad;
-}
+const validateTitulo = (t) =>
+  isNonEmptyString(t) && t.trim().length <= 100
+    ? null
+    : "Título obligatorio y ≤ 100 caracteres";
 
-// Métodos del prototipo Tarea
-Tarea.prototype.setEstado = function (nuevoEstado) {
-  const estadosValidos = ["pendiente", "en curso", "terminada", "cancelada"];
-  if (!estadosValidos.includes(nuevoEstado)) {
-    throw new Error("Estado inválido");
-  }
-  this.estado = nuevoEstado;
-  this.ultimaEdicion = new Date();
+const validateDescripcion = (d) =>
+  typeof d === "string" && d.length <= 500 ? null : "Descripción ≤ 500 caracteres";
+
+const validateEstado = (e) =>
+  Object.values(ESTADOS).includes(e) ? null : "Estado inválido";
+
+const validateDificultad = (dif) =>
+  Object.values(DIFICULTAD).includes(dif) ? null : "Dificultad inválida";
+
+const validateDateOrNull = (d) =>
+  d === null || d instanceof Date ? null : "Fecha inválida";
+
+// Valida un objeto tarea ya formado (puro)
+const validateTask = (task) => {
+  const errors = [
+    validateTitulo(task.titulo),
+    validateDescripcion(task.descripcion),
+    validateEstado(task.estado),
+    validateDificultad(task.dificultad),
+    validateDateOrNull(task.creacion),
+    validateDateOrNull(task.ultimaEdicion),
+    validateDateOrNull(task.vencimiento),
+  ].filter(Boolean);
+  return errors.length ? errors : null;
 };
 
-Tarea.prototype.setDificultad = function (nuevaDificultad) {
-  if (![1, 2, 3].includes(nuevaDificultad)) {
-    throw new Error("Dificultad inválida (1=fácil, 2=medio, 3=difícil)");
-  }
-  this.dificultad = nuevaDificultad;
-  this.ultimaEdicion = new Date();
+// ------------------------------
+// 🧪 Creación de tareas (puro)
+// - Se inyectan dependencias (env): now() y genId()
+// ------------------------------
+const normalizeDateInput = (v) => {
+  if (!v) return null;
+  const d = new Date(`${v}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
 };
 
-Tarea.prototype.getDificultadVisual = function () {
-  return "⭐".repeat(this.dificultad);
+const clampDesc = (d) => (d ? d.slice(0, 500) : "");
+
+const makeTask = (spec, env) => {
+  const now = env.now();
+  const base = {
+    id: env.genId(),
+    titulo: spec.titulo.trim(),
+    descripcion: clampDesc(spec.descripcion || ""),
+    estado: spec.estado || ESTADOS.PENDIENTE,
+    creacion: now,
+    ultimaEdicion: now,
+    vencimiento: normalizeDateInput(spec.vencimiento),
+    dificultad: spec.dificultad || DIFICULTAD.FACIL,
+  };
+  const errors = validateTask(base);
+  if (errors) throw new Error(errors.join(" | "));
+  return deepFreeze(base);
 };
 
-Tarea.prototype.detalle = function () {
-  return `
-📌 ${this.titulo}
-📝 Descripción: ${this.descripcion || "Sin descripción"}
-📊 Estado: ${this.estado}
-💪 Dificultad: ${this.getDificultadVisual()}
-📅 Creación: ${this.fechaCreacion.toLocaleString()}
-🛠 Última edición: ${this.ultimaEdicion.toLocaleString()}
-⏳ Vencimiento: ${this.vencimiento ? this.vencimiento.toLocaleDateString() : "Sin datos"}
-  `.trim();
+// Agregar tarea a lista (puro)
+const addTask = (list, task) => freezeArrayCopy([...list, task]);
+
+// ------------------------------
+// ✏️ Actualizaciones (puro, inmutables)
+// Cada "setter" devuelve una NUEVA tarea + refresca ultimaEdicion
+// ------------------------------
+const withEditStamp = (task, now) =>
+  freezeCopy({ ...task, ultimaEdicion: now });
+
+const setTitulo = (task, newTitulo, now) => {
+  const t = { ...task, titulo: newTitulo.trim() };
+  const errors = validateTitulo(t.titulo);
+  if (errors) throw new Error(errors);
+  return withEditStamp(t, now);
 };
 
-// Constructor de GestorTareas
-function GestorTareas() {
-  this.tareas = [];
-}
-
-// Métodos del prototipo GestorTareas
-GestorTareas.prototype.agregarTarea = function (tarea) {
-  this.tareas.push(tarea);
+const setDescripcion = (task, newDesc, now) => {
+  const t = { ...task, descripcion: clampDesc(newDesc || "") };
+  const errors = validateDescripcion(t.descripcion);
+  if (errors) throw new Error(errors);
+  return withEditStamp(t, now);
 };
 
-GestorTareas.prototype.listarTareas = function (filtro = null) {
-  return this.tareas.filter((t) => !filtro || t.estado === filtro);
+const setEstado = (task, nuevoEstado, now) => {
+  const t = { ...task, estado: nuevoEstado };
+  const err = validateEstado(t.estado);
+  if (err) throw new Error(err);
+  return withEditStamp(t, now);
 };
 
-GestorTareas.prototype.buscarTareas = function (palabra) {
-  return this.tareas.filter((t) =>
-    t.titulo.toLowerCase().includes(palabra.toLowerCase())
+const setDificultad = (task, dif, now) => {
+  const t = { ...task, dificultad: dif };
+  const err = validateDificultad(t.dificultad);
+  if (err) throw new Error(err);
+  return withEditStamp(t, now);
+};
+
+const setVencimiento = (task, v, now) => {
+  const t = { ...task, vencimiento: normalizeDateInput(v) };
+  const err = validateDateOrNull(t.vencimiento);
+  if (err) throw new Error(err);
+  return withEditStamp(t, now);
+};
+
+// Actualizar una tarea por id con "updater" puro (puro)
+const updateTaskById = (list, id, updater, now) =>
+  freezeArrayCopy(
+    list.map((t) => (t.id === id ? updater(t, now) : t))
   );
+
+// ------------------------------
+// 🔎 Filtrado (puro, HOFs)
+// ------------------------------
+const byEstado = (estado) => (t) => t.estado === estado;
+
+const byTituloIncludes = (q) => {
+  const needle = q.trim().toLowerCase();
+  return (t) => t.titulo.toLowerCase().includes(needle);
 };
 
-GestorTareas.prototype.getTarea = function (index) {
-  return this.tareas[index];
+const filterTasks = (list, ...predicates) =>
+  list.filter((t) => predicates.every((p) => p(t)));
+
+// ------------------------------
+// 🔽 Ordenamiento (puro, HOFs)
+// ------------------------------
+// Utilidades de comparadores
+const compareAsc = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const compareBy = (proj) => (x, y) => compareAsc(proj(x), proj(y));
+const reverse = (cmp) => (a, b) => -cmp(a, b);
+
+// Criterios
+const sortByCreacion = compareBy((t) => t.creacion?.getTime() ?? 0);
+const sortByVencimiento = compareBy((t) => t.vencimiento ? t.vencimiento.getTime() : Number.POSITIVE_INFINITY);
+const sortByTitulo = compareBy((t) => t.titulo.toLowerCase());
+
+// Ordenar devuelve NUEVA lista (puro)
+const sortTasks = (list, comparator) =>
+  freezeArrayCopy([...list].sort(comparator));
+
+// ------------------------------
+// 🧰 Operaciones compuestas (puro)
+// Ejemplo: filtrar por estado y ordenar por vencimiento
+// ------------------------------
+const filterAndSort = (list, predicates, comparator) =>
+  pipe(
+    (xs) => filterTasks(xs, ...predicates),
+    (xs) => sortTasks(xs, comparator)
+  )(list);
+
+// ------------------------------
+// 💾 Persistencia funcional
+// (puro) serializar/deserializar
+// ------------------------------
+const serializeTasks = (list) =>
+  JSON.stringify(
+    list.map((t) => ({
+      ...t,
+      creacion: t.creacion ? t.creacion.toISOString() : null,
+      ultimaEdicion: t.ultimaEdicion ? t.ultimaEdicion.toISOString() : null,
+      vencimiento: t.vencimiento ? t.vencimiento.toISOString() : null,
+    })),
+    null,
+    2
+  );
+
+const deserializeTasks = (json) => {
+  const raw = JSON.parse(json);
+  const list = raw.map((r) =>
+    deepFreeze({
+      ...r,
+      creacion: r.creacion ? new Date(r.creacion) : null,
+      ultimaEdicion: r.ultimaEdicion ? new Date(r.ultimaEdicion) : null,
+      vencimiento: r.vencimiento ? new Date(r.vencimiento) : null,
+    })
+  );
+  return deepFreeze(list);
 };
 
-// Instancia del gestor
-const gestor = new GestorTareas();
+// =======================================================
+// 🚪 CLI / I-O (impuro, reducido al mínimo)
+// =======================================================
+const prompt = require("prompt-sync")({ sigint: true }); // impuro (entrada)
+const fs = require("fs"); // impuro (archivo)
+const PATH_DB = "./tasks.json";
 
-// ===============================
-// ORDENAMIENTO BONUS
-// ===============================
-function ordenarTareas(lista, callbackVolver) {
-  if (lista.length === 0) {
-    console.log("\n⚠️ No hay tareas para mostrar");
-    return callbackVolver();
+// Dependencias inyectables para pureza en el core:
+const env = {
+  now: () => new Date(),
+  // genId se inyecta para que la creación sea testeable
+  genId: (() => {
+    // contador cerrado: no toca globales del programa
+    let c = 0;
+    return () => `t-${Date.now()}-${++c}`;
+  })(),
+};
+
+// I/O impuro reducido
+const readFileOr = (path, fallback) => {
+  try {
+    return fs.readFileSync(path, "utf8");
+  } catch {
+    return fallback;
+  }
+};
+
+const writeFile = (path, content) => {
+  fs.writeFileSync(path, content, "utf8");
+};
+
+// Capa de estado "externo" sólo en la CLI
+let TASKS = (() => {
+  const raw = readFileOr(PATH_DB, null);
+  if (!raw) return deepFreeze([]);
+  try {
+    return deserializeTasks(raw);
+  } catch {
+    return deepFreeze([]);
+  }
+})();
+
+// ---------- UI helpers (impuro: sólo formateo/console) ----------
+const show = (msg) => console.log(msg);
+const showTask = (t) =>
+  console.log(
+    [
+      `# ${t.titulo}`,
+      `   • Estado: ${t.estado}`,
+      `   • Dificultad: ${t.dificultad}`,
+      `   • Creación: ${t.creacion?.toLocaleString() ?? "-"}`,
+      `   • Últ. edición: ${t.ultimaEdicion?.toLocaleString() ?? "-"}`,
+      `   • Vence: ${t.vencimiento?.toLocaleDateString() ?? "-"}`,
+      `   • Desc: ${t.descripcion || "-"}`,
+      `   • ID: ${t.id}`,
+    ].join("\n")
+  );
+
+const persist = () => writeFile(PATH_DB, serializeTasks(TASKS));
+
+// ------------------------------
+// Menú (impuro, pero fino)
+// ------------------------------
+const mainMenu = () => {
+  show("\n=== ToDo List (Funcional) ===");
+  show("1) Agregar tarea");
+  show("2) Listar tareas");
+  show("3) Buscar por título");
+  show("4) Filtrar por estado");
+  show("5) Ordenar");
+  show("6) Editar tarea");
+  show("0) Salir");
+  const op = prompt("> ");
+
+  switch (op) {
+    case "1":
+      return uiAgregar();
+    case "2":
+      return uiListar();
+    case "3":
+      return uiBuscar();
+    case "4":
+      return uiFiltrarEstado();
+    case "5":
+      return uiOrdenar();
+    case "6":
+      return uiEditar();
+    case "0":
+      show("👋 Adiós");
+      process.exit(0);
+    default:
+      show("Opción inválida");
+      return mainMenu();
+  }
+};
+
+const ask = (q, def = "") => {
+  const v = prompt(`${q}${def ? ` (${def})` : ""}: `);
+  return v.trim() === "" ? def : v.trim();
+};
+
+// ------------------------------
+// Acciones de menú (impuras minimalistas)
+// ------------------------------
+function uiAgregar() {
+  try {
+    const titulo = ask("Título");
+    const descripcion = ask("Descripción");
+    const venc = ask("Vencimiento YYYY-MM-DD", "");
+    const dif = ask("Dificultad [Fácil|Medio|Difícil]", DIFICULTAD.FACIL);
+    const nueva = makeTask(
+      { titulo, descripcion, vencimiento: venc || null, dificultad: dif },
+      env
+    );
+    TASKS = addTask(TASKS, nueva);
+    persist();
+    show("✅ Tarea agregada");
+  } catch (e) {
+    show("❌ " + e.message);
+  }
+  return mainMenu();
+}
+
+function uiListar() {
+  if (TASKS.length === 0) {
+    show("⚠️ Sin tareas");
+    return mainMenu();
+  }
+  TASKS.forEach(showTask);
+  return mainMenu();
+}
+
+function uiBuscar() {
+  const q = ask("Buscar por título contiene");
+  const res = filterTasks(TASKS, byTituloIncludes(q));
+  if (res.length === 0) show("⚠️ Sin coincidencias");
+  res.forEach(showTask);
+  return mainMenu();
+}
+
+function uiFiltrarEstado() {
+  const e = ask("Estado [Pendiente|En Curso|Terminada|Cancelada]", ESTADOS.PENDIENTE);
+  const res = filterTasks(TASKS, byEstado(e));
+  if (res.length === 0) show("⚠️ No hay tareas con ese estado");
+  res.forEach(showTask);
+  return mainMenu();
+}
+
+function uiOrdenar() {
+  show("1) Por creación (asc)");
+  show("2) Por vencimiento (asc)");
+  show("3) Por título (A→Z)");
+  const o = prompt("> ");
+  const cmp =
+    o === "1" ? sortByCreacion :
+    o === "2" ? sortByVencimiento :
+    o === "3" ? sortByTitulo :
+    null;
+
+  if (!cmp) {
+    show("Sin ordenar");
+    return mainMenu();
+  }
+  const res = sortTasks(TASKS, cmp);
+  res.forEach(showTask);
+  return mainMenu();
+}
+
+function uiEditar() {
+  const id = ask("ID de la tarea a editar");
+  const t = TASKS.find((x) => x.id === id);
+  if (!t) {
+    show("❌ ID no encontrado");
+    return mainMenu();
   }
 
-  console.log("\n📊 Ordenar tareas:");
-  console.log("1. Por fecha de creación");
-  console.log("2. Por vencimiento");
-  console.log("3. Alfabéticamente (título)");
-  console.log("Enter. Sin ordenar");
+  showTask(t);
+  show("Editar: 1) Título  2) Descripción  3) Estado  4) Dificultad  5) Vencimiento  0) Cancelar");
+  const op = prompt("> ");
+  const now = env.now();
 
-  rl.question("\nElige opción de ordenamiento: ", (opcion) => {
-    let ordenadas = [...lista];
-
-    if (opcion === "1") {
-      ordenadas.sort((a, b) => a.fechaCreacion - b.fechaCreacion);
-    } else if (opcion === "2") {
-      ordenadas.sort((a, b) => {
-        if (!a.vencimiento) return 1;
-        if (!b.vencimiento) return -1;
-        return a.vencimiento - b.vencimiento;
-      });
-    } else if (opcion === "3") {
-      ordenadas.sort((a, b) => a.titulo.localeCompare(b.titulo));
+  try {
+    if (op === "1") {
+      const v = ask("Nuevo título", t.titulo);
+      TASKS = updateTaskById(TASKS, id, (task) => setTitulo(task, v, now), now);
+    } else if (op === "2") {
+      const v = ask("Nueva descripción", t.descripcion);
+      TASKS = updateTaskById(TASKS, id, (task) => setDescripcion(task, v, now), now);
+    } else if (op === "3") {
+      const v = ask("Nuevo estado [Pendiente|En Curso|Terminada|Cancelada]", t.estado);
+      TASKS = updateTaskById(TASKS, id, (task) => setEstado(task, v, now), now);
+    } else if (op === "4") {
+      const v = ask("Nueva dificultad [Fácil|Medio|Difícil]", t.dificultad);
+      TASKS = updateTaskById(TASKS, id, (task) => setDificultad(task, v, now), now);
+    } else if (op === "5") {
+      const v = ask("Nuevo vencimiento YYYY-MM-DD (vacío para limpiar)", t.vencimiento ? t.vencimiento.toISOString().slice(0,10) : "");
+      TASKS = updateTaskById(TASKS, id, (task) => setVencimiento(task, v || null, now), now);
+    } else {
+      show("Cancelado");
+      return mainMenu();
     }
-
-    mostrarListadoTareas(ordenadas, callbackVolver);
-  });
+    persist();
+    show("✅ Tarea actualizada");
+  } catch (e) {
+    show("❌ " + e.message);
+  }
+  return mainMenu();
 }
 
-// ===============================
-// MENÚ PRINCIPAL
-// ===============================
-function menuPrincipal() {
-  console.log("\n📋 MENÚ PRINCIPAL");
-  console.log("1. Ver mis tareas");
-  console.log("2. Buscar una tarea");
-  console.log("3. Agregar una tarea");
-  console.log("0. Salir");
-
-  rl.question("\nElige una opción: ", (opcion) => {
-    switch (opcion) {
-      case "1":
-        menuVerTareas();
-        break;
-      case "2":
-        menuBuscarTarea();
-        break;
-      case "3":
-        menuAgregarTarea();
-        break;
-      case "0":
-        console.log("👋 Saliendo...");
-        rl.close();
-        break;
-      default:
-        console.log("❌ Opción no válida");
-        menuPrincipal();
-    }
-  });
-}
-
-// ===============================
-// MENÚ VER TAREAS
-// ===============================
-function menuVerTareas() {
-  console.log("\n📋 VER TAREAS");
-  console.log("1. Todas");
-  console.log("2. Pendientes");
-  console.log("3. En curso");
-  console.log("4. Terminadas");
-  console.log("0. Volver");
-
-  rl.question("\nElige una opción: ", (opcion) => {
-    let filtro = null;
-    if (opcion === "2") filtro = "pendiente";
-    if (opcion === "3") filtro = "en curso";
-    if (opcion === "4") filtro = "terminada";
-
-    if (opcion === "0") return menuPrincipal();
-
-    if (!["1", "2", "3", "4"].includes(opcion)) {
-      console.log("❌ Opción no válida");
-      return menuVerTareas();
-    }
-
-    const lista = gestor.listarTareas(filtro);
-    ordenarTareas(lista, menuVerTareas);
-  });
-}
-
-// ===============================
-// LISTADO DE TAREAS
-// ===============================
-function mostrarListadoTareas(lista, callbackVolver) {
-  console.log("\n📋 LISTADO DE TAREAS:");
-  lista.forEach((t, i) =>
-    console.log(`${i + 1}. ${t.titulo} (${t.estado}) [${t.getDificultadVisual()}]`)
+// ------------------------------
+// Arranque CLI (impuro)
+// ------------------------------
+(function start() {
+  // Pequeña demo de composición (bonus): listar Pendientes ordenadas por Vencimiento
+  const pendientesOrdenadas = filterAndSort(
+    TASKS,
+    [byEstado(ESTADOS.PENDIENTE)],
+    sortByVencimiento
   );
-  console.log("0. Volver");
-
-  rl.question("\nElige una tarea para ver detalles o 0 para volver: ", (opcion) => {
-    if (opcion === "0") return callbackVolver();
-
-    const index = parseInt(opcion) - 1;
-    if (isNaN(index) || index < 0 || index >= lista.length) {
-      console.log("❌ Opción no válida");
-      return mostrarListadoTareas(lista, callbackVolver);
-    }
-
-    menuDetalleTarea(lista[index], callbackVolver);
-  });
-}
-
-// ===============================
-// DETALLE DE TAREA
-// ===============================
-function menuDetalleTarea(tarea, callbackVolver) {
-  console.log("\n📋 DETALLE DE TAREA");
-  console.log(tarea.detalle());
-  console.log("\nE. Editar tarea");
-  console.log("0. Volver");
-
-  rl.question("\nElige una opción: ", (opcion) => {
-    if (opcion.toLowerCase() === "e") {
-      return menuEditarTarea(tarea, () => menuDetalleTarea(tarea, callbackVolver));
-    }
-    if (opcion === "0") return callbackVolver();
-    console.log("❌ Opción no válida");
-    menuDetalleTarea(tarea, callbackVolver);
-  });
-}
-
-// ===============================
-// EDITAR TAREA
-// ===============================
-function menuEditarTarea(tarea, callbackVolver) {
-  console.log("\n✏️ EDITAR TAREA");
-  rl.question(`Título (${tarea.titulo}): `, (titulo) => {
-    if (titulo.trim() !== "") tarea.titulo = titulo.trim();
-
-    rl.question(`Descripción (${tarea.descripcion}): `, (descripcion) => {
-      if (descripcion.trim() !== "") tarea.descripcion = descripcion.slice(0, 500);
-
-      rl.question(`Estado (${tarea.estado}) [pendiente/en curso/terminada/cancelada]: `, (estado) => {
-        if (estado.trim() !== "") tarea.setEstado(estado.trim());
-
-        rl.question(`Dificultad (${tarea.dificultad}) [1=fácil, 2=medio, 3=difícil]: `, (dif) => {
-          if (dif.trim() !== "") tarea.setDificultad(Number(dif));
-
-          rl.question(`Vencimiento (${tarea.vencimiento ? tarea.vencimiento.toLocaleDateString() : "Sin datos"}): `, (venc) => {
-            if (venc.trim() !== "") tarea.vencimiento = new Date(venc);
-
-            tarea.ultimaEdicion = new Date();
-            console.log("✅ Tarea actualizada!");
-            callbackVolver();
-          });
-        });
-      });
-    });
-  });
-}
-
-// ===============================
-// BUSCAR TAREA
-// ===============================
-function menuBuscarTarea() {
-  rl.question("\n🔍 Ingresa palabra clave para buscar: ", (palabra) => {
-    const resultados = gestor.buscarTareas(palabra);
-    if (resultados.length === 0) {
-      console.log("\n⚠️ No se encontraron coincidencias.");
-      return menuPrincipal();
-    }
-    ordenarTareas(resultados, menuPrincipal);
-  });
-}
-
-// ===============================
-// AGREGAR TAREA
-// ===============================
-function menuAgregarTarea() {
-  console.log("\n➕ AGREGAR NUEVA TAREA");
-
-  rl.question("Título: ", (titulo) => {
-    rl.question("Descripción (opcional): ", (descripcion) => {
-      rl.question("Vencimiento (YYYY-MM-DD o enter para omitir): ", (vencimiento) => {
-        rl.question("Dificultad (1=fácil, 2=medio, 3=difícil): ", (dif) => {
-          try {
-            const tarea = new Tarea(
-              titulo,
-              descripcion,
-              vencimiento || null,
-              Number(dif) || 1
-            );
-            gestor.agregarTarea(tarea);
-            console.log("✅ Tarea guardada!");
-          } catch (err) {
-            console.log("❌ Error: " + err.message);
-          }
-          menuPrincipal();
-        });
-      });
-    });
-  });
-}
-
-// ===============================
-// INICIO DEL PROGRAMA
-// ===============================
-menuPrincipal();
+  if (pendientesOrdenadas.length) {
+    show("\n➡️  Pendientes (ordenadas por vencimiento):");
+    pendientesOrdenadas.forEach(showTask);
+  }
+  mainMenu();
+})();
